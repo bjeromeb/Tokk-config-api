@@ -3,9 +3,9 @@ const router = express.Router();
 
 // Valid API keys 
 const VALID_API_KEYS = [
-  process.env.API_KEY_IOS || 'a8c6dd9f-d79c-47fa-b589-d55749e123af',
-  process.env.API_KEY_ANDROID || 'cd9c770d-57fa-40de-8851-9201a5670f50',
-  process.env.API_KEY_WEB || 'e9550749-7d27-4bbf-8e83-89c9dd598596'
+  process.env.API_KEY_IOS,
+  process.env.API_KEY_ANDROID,
+  process.env.API_KEY_WEB
 ];
 
 
