@@ -26,7 +26,7 @@ app.use(helmet({
 // CORS configuration
 app.use(cors({
   origin: process.env.NODE_ENV === 'production' 
-    ? ['https://your-app-domain.com'] // Replace with your actual app domains
+    ? ['https://admin.tokk.ai/']
     : true,
   credentials: true,
   optionsSuccessStatus: 200

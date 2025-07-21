@@ -47,8 +47,23 @@ const getAppConfig = () => {
   };
 };
 
-// Load configuration on startup
+const getAppConfigTest = () => {
+  if (process.env.APP_CONFIG_TEST) {
+    try {
+      const parsedConfig = JSON.parse(process.env.APP_CONFIG_TEST);
+      console.log('✅ Test configuration loaded from APP_CONFIG_TEST environment variable');
+      return parsedConfig;
+    } catch (error) {
+      console.error('❌ Failed to parse APP_CONFIG_TEST JSON:', error.message);
+      console.log('📋 Falling back to main APP_CONFIG for test environment...');
+    }
+  }
+  // Fallback to main config if test config not set
+  return APP_CONFIG;
+};
+
 const APP_CONFIG = getAppConfig();
+const APP_CONFIG_TEST = getAppConfigTest();
 
 // Rate limiting - simple in-memory store (use Redis in production)
 const rateLimitStore = new Map();
@@ -164,6 +179,46 @@ router.get('/config', rateLimit, validateApiKey, validateRequest, (req, res) => 
     
     res.json(response);
     
+  } catch (error) {
+    console.error('❌ Error serving config:', error);
+    res.status(500).json({
+      error: 'Internal Server Error',
+      message: 'Unable to retrieve configuration',
+      timestamp: new Date().toISOString()
+    });
+  }
+});
+
+// Add: Environment-specific config endpoint
+router.get('/config/:environment', rateLimit, validateApiKey, validateRequest, (req, res) => {
+  try {
+    const { environment } = req.params;
+    const appId = req.headers['x-app-id'] || 'unknown';
+    const appVersion = req.headers['x-app-version'] || 'unknown';
+    const platform = req.headers['x-platform'] || 'unknown';
+    const userAgent = req.headers['user-agent'] || 'unknown';
+    console.log(`✅ Config served for env '${environment}' - App: ${appId}, Version: ${appVersion}, Platform: ${platform}, IP: ${req.ip}`);
+    const requestId = `req_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
+    let config;
+    if (environment === 'test') {
+      config = APP_CONFIG_TEST;
+    } else {
+      config = APP_CONFIG;
+    }
+    const response = {
+      ...config,
+      metadata: {
+        timestamp: new Date().toISOString(),
+        requestId: requestId,
+        serverVersion: process.env.npm_package_version || '1.0.0',
+        environment: environment
+      }
+    };
+    res.set({
+      'Cache-Control': 'public, max-age=300',
+      'ETag': `"${Buffer.from(JSON.stringify(config)).toString('base64')}"`
+    });
+    res.json(response);
   } catch (error) {
     console.error('❌ Error serving config:', error);
     res.status(500).json({
