@@ -9,7 +9,7 @@ const VALID_API_KEYS = [
 ];
 
 
-// Configuration data - read from environment variable as JSON
+// Configuration data - read from environment variable as JSON object
 const getAppConfig = () => {
   // Try to read complete configuration from APP_CONFIG environment variable
   if (process.env.APP_CONFIG) {
