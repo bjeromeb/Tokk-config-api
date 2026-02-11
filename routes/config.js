@@ -9,21 +9,8 @@ const VALID_API_KEYS = [
 ];
 
 
-// Configuration data - read from environment variable as JSON
-const getAppConfig = () => {
-  // Try to read complete configuration from APP_CONFIG environment variable
-  if (process.env.APP_CONFIG) {
-    try {
-      const parsedConfig = JSON.parse(process.env.APP_CONFIG);
-      console.log('✅ Configuration loaded from APP_CONFIG environment variable');
-      return parsedConfig;
-    } catch (error) {
-      console.error('❌ Failed to parse APP_CONFIG JSON:', error.message);
-      console.log('📋 Falling back to individual environment variables...');
-    }
-  }
-  
-  // Fallback to individual environment variables (backward compatibility)
+// Legacy fallback config for v1 (individual environment variables)
+const getLegacyConfig = () => {
   return {
     aws: {
       cognito: {
@@ -47,23 +34,49 @@ const getAppConfig = () => {
   };
 };
 
-const getAppConfigTest = () => {
-  if (process.env.APP_CONFIG_TEST) {
+// Generic config loader that supports any version
+const getAppConfig = (version = '', environment = '') => {
+  const versionSuffix = version ? `_${version}` : '';
+  const envSuffix = environment ? `_${environment.toUpperCase()}` : '';
+  const envVarName = `APP_CONFIG${versionSuffix}${envSuffix}`;
+  
+  if (process.env[envVarName]) {
     try {
-      const parsedConfig = JSON.parse(process.env.APP_CONFIG_TEST);
-      console.log('✅ Test configuration loaded from APP_CONFIG_TEST environment variable');
+      const parsedConfig = JSON.parse(process.env[envVarName]);
+      console.log(`✅ Configuration loaded from ${envVarName} environment variable`);
       return parsedConfig;
     } catch (error) {
-      console.error('❌ Failed to parse APP_CONFIG_TEST JSON:', error.message);
-      console.log('📋 Falling back to main APP_CONFIG for test environment...');
+      console.error(`❌ Failed to parse ${envVarName} JSON:`, error.message);
     }
   }
-  // Fallback to main config if test config not set
-  return APP_CONFIG;
+  
+  // Fallback logic
+  if (environment && !version) {
+    return configCache.get('') || getLegacyConfig();
+  }
+  if (environment && version) {
+    return configCache.get(version) || configCache.get('') || getLegacyConfig();
+  }
+  if (version && !environment) {
+    return configCache.get('') || getLegacyConfig();
+  }
+  
+  return getLegacyConfig();
 };
 
-const APP_CONFIG = getAppConfig();
-const APP_CONFIG_TEST = getAppConfigTest();
+// Cache configs on startup
+const configCache = new Map();
+['', '2', '3', '4', '5'].forEach(version => {
+  const config = getAppConfig(version);
+  configCache.set(version, config);
+  
+  const testConfig = getAppConfig(version, 'test');
+  configCache.set(`${version}_test`, testConfig);
+});
+
+// Legacy constants for backward compatibility
+const APP_CONFIG = configCache.get('');
+const APP_CONFIG_TEST = configCache.get('_test');
 
 // Rate limiting - simple in-memory store (use Redis in production)
 const rateLimitStore = new Map();
@@ -145,22 +158,99 @@ const validateRequest = (req, res, next) => {
   next();
 };
 
-// Add: Environment-specific config endpoint
+// Versioned config endpoint (v2, v3, v4, etc.)
+router.get('/v:version/config/:environment', rateLimit, validateApiKey, validateRequest, (req, res) => {
+  try {
+    const { version, environment } = req.params;
+    const appId = req.headers['x-app-id'] || 'unknown';
+    const appVersion = req.headers['x-app-version'] || 'unknown';
+    const platform = req.headers['x-platform'] || 'unknown';
+    
+    console.log(`✅ V${version} config served for env '${environment}' - App: ${appId}, Version: ${appVersion}, Platform: ${platform}, IP: ${req.ip}`);
+    
+    const requestId = `req_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
+    const cacheKey = environment === 'test' ? `${version}_test` : version;
+    const config = configCache.get(cacheKey);
+    
+    const response = {
+      ...config,
+      metadata: {
+        timestamp: new Date().toISOString(),
+        requestId: requestId,
+        serverVersion: process.env.npm_package_version || '1.0.0',
+        environment: environment,
+        apiVersion: version
+      }
+    };
+    
+    res.set({
+      'Cache-Control': 'public, max-age=300',
+      'ETag': `"${Buffer.from(JSON.stringify(config)).toString('base64')}"`
+    });
+    
+    res.json(response);
+  } catch (error) {
+    console.error(`❌ Error serving v${req.params.version} config:`, error);
+    res.status(500).json({
+      error: 'Internal Server Error',
+      message: 'Unable to retrieve configuration',
+      timestamp: new Date().toISOString()
+    });
+  }
+});
+
+router.get('/v:version/config', rateLimit, validateApiKey, validateRequest, (req, res) => {
+  try {
+    const { version } = req.params;
+    const appId = req.headers['x-app-id'] || 'unknown';
+    const appVersion = req.headers['x-app-version'] || 'unknown';
+    const platform = req.headers['x-platform'] || 'unknown';
+    
+    console.log(`✅ V${version} config served - App: ${appId}, Version: ${appVersion}, Platform: ${platform}, IP: ${req.ip}`);
+    
+    const requestId = `req_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
+    const config = configCache.get(version);
+    
+    const response = {
+      ...config,
+      metadata: {
+        timestamp: new Date().toISOString(),
+        requestId: requestId,
+        serverVersion: process.env.npm_package_version || '1.0.0',
+        environment: process.env.NODE_ENV || 'development',
+        apiVersion: version
+      }
+    };
+    
+    res.set({
+      'Cache-Control': 'public, max-age=300',
+      'ETag': `"${Buffer.from(JSON.stringify(config)).toString('base64')}"`
+    });
+    
+    res.json(response);
+  } catch (error) {
+    console.error(`❌ Error serving v${req.params.version} config:`, error);
+    res.status(500).json({
+      error: 'Internal Server Error',
+      message: 'Unable to retrieve configuration',
+      timestamp: new Date().toISOString()
+    });
+  }
+});
+
+// Legacy v1 config endpoints (backward compatibility)
 router.get('/config/:environment', rateLimit, validateApiKey, validateRequest, (req, res) => {
   try {
     const { environment } = req.params;
     const appId = req.headers['x-app-id'] || 'unknown';
     const appVersion = req.headers['x-app-version'] || 'unknown';
     const platform = req.headers['x-platform'] || 'unknown';
-    const userAgent = req.headers['user-agent'] || 'unknown';
+    
     console.log(`✅ Config served for env '${environment}' - App: ${appId}, Version: ${appVersion}, Platform: ${platform}, IP: ${req.ip}`);
+    
     const requestId = `req_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
-    let config;
-    if (environment === 'test') {
-      config = APP_CONFIG_TEST;
-    } else {
-      config = APP_CONFIG;
-    }
+    const config = environment === 'test' ? APP_CONFIG_TEST : APP_CONFIG;
+    
     const response = {
       ...config,
       metadata: {
@@ -170,10 +260,12 @@ router.get('/config/:environment', rateLimit, validateApiKey, validateRequest, (
         environment: environment
       }
     };
+    
     res.set({
       'Cache-Control': 'public, max-age=300',
       'ETag': `"${Buffer.from(JSON.stringify(config)).toString('base64')}"`
     });
+    
     res.json(response);
   } catch (error) {
     console.error('❌ Error serving config:', error);
@@ -185,22 +277,16 @@ router.get('/config/:environment', rateLimit, validateApiKey, validateRequest, (
   }
 });
 
-// Configuration endpoint
 router.get('/config', rateLimit, validateApiKey, validateRequest, (req, res) => {
   try {
-    // Extract request metadata
     const appId = req.headers['x-app-id'] || 'unknown';
     const appVersion = req.headers['x-app-version'] || 'unknown';
     const platform = req.headers['x-platform'] || 'unknown';
-    const userAgent = req.headers['user-agent'] || 'unknown';
     
-    // Log successful request
     console.log(`✅ Config served - App: ${appId}, Version: ${appVersion}, Platform: ${platform}, IP: ${req.ip}`);
     
-    // Generate request ID for tracking
     const requestId = `req_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
     
-    // Prepare response with metadata
     const response = {
       ...APP_CONFIG,
       metadata: {
@@ -211,14 +297,12 @@ router.get('/config', rateLimit, validateApiKey, validateRequest, (req, res) => 
       }
     };
     
-    // Set cache headers (optional)
     res.set({
-      'Cache-Control': 'public, max-age=300', // 5 minutes
+      'Cache-Control': 'public, max-age=300',
       'ETag': `"${Buffer.from(JSON.stringify(APP_CONFIG)).toString('base64')}"`
     });
     
     res.json(response);
-    
   } catch (error) {
     console.error('❌ Error serving config:', error);
     res.status(500).json({
