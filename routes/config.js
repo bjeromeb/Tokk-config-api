@@ -23,7 +23,7 @@ const getLegacyConfig = () => {
     },
     bot: {
       botId: process.env.BOT_ID,
-      foundationModel: process.env.FOUNDATION_MODEL || "claude-v3.7-sonnet"
+      foundationModel: process.env.FOUNDATION_MODEL || "claude-v4.5-sonnet"
     },
     features: {
       darkMode: process.env.FEATURE_DARK_MODE === 'true' || false,
